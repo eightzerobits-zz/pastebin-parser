@@ -45,6 +45,14 @@ import sys
 import datetime
 import random
 import os
+import smtplib
+from email import encoders
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+sender = 'pastebin-parser@example.net'
+receivers = ['you@example.net']
+smtpserver = '127.0.0.1'
 
 pastesseen = set()
 pastes = Queue.Queue()
@@ -58,18 +66,19 @@ def downloader():
         delay = 1.1 # random.uniform(1, 3)
         fn = "pastebins/%s-%s.txt" % (paste, datetime.datetime.today().strftime("%Y-%m-%d"))
         content = urllib2.urlopen("http://pastebin.com/raw.php?i=" + paste).read()
-        for s in searchstrings: 
-	   if s.strip().lower() in content.lower():
-              print s.strip() + " found"
-	      if "requesting a little bit too much" in content:
-  	          print "Throttling... requeuing %s" % paste
-	          pastes.put(paste)
-	          time.sleep(0.1)
-	      else:
-	          f = open(fn, "wt")
-	          f.write(content)
-	          f.close()
-        	  sys.stdout.write("Downloaded %s, waiting %f sec\n" % (paste, delay))
+	if "requesting a little bit too much" in content:
+  	   print "Throttling... requeuing %s" % paste
+	   pastes.put(paste)
+	   time.sleep(0.1)
+	else:
+	   for s in searchstrings:
+		if s.strip().lower() in content.lower():
+			print s.strip() + " found" 
+		  	f = open(fn, "wt")
+	          	f.write(content)
+	          	f.close()
+        	  	sys.stdout.write("Downloaded %s, waiting %f sec\n" % (paste, delay))
+		  	emailalert(content,s.strip(),paste)
         delay = 1.1 # random.uniform(1, 3)
         time.sleep(delay)
         pastes.task_done()
@@ -77,21 +86,35 @@ def downloader():
 def scraper():
     scrapecount = 1
     while scrapecount:
-        html = urllib2.urlopen("http://www.pastebin.com").read()
+        html = urllib2.urlopen("http://www.pastebin.com/archives/").read()
         soup = BeautifulSoup.BeautifulSoup(html)
-        ul = soup.find("ul", "right_menu")
-        for li in ul.findAll("li"):
-            href = li.a["href"]
-            if href in pastesseen:
-                sys.stdout.write("%s already seen\n" % href)
-            else:
-                href = href[1:] # chop off leading /
-                pastes.put(href)
-                pastesseen.add(href)
-                sys.stdout.write("%s queued for download\n" % href)
+        for link in soup.findAll('a'):
+            href = link.get('href')
+            if '/' in href[0] and len(href) == 9:
+	        if href in pastesseen:
+                    sys.stdout.write("%s already seen\n" % href)
+                else:
+                    href = href[1:] # chop off leading /
+                    pastes.put(href)
+                    pastesseen.add(href)
+                    sys.stdout.write("%s queued for download\n" % href)
         delay = 12 # random.uniform(6,10)
         time.sleep(delay)
         scrapecount = 1
+
+def emailalert(content,keyword,paste):
+    outer = MIMEMultipart()
+    outer['Subject'] = 'Pastebin Parser Alert %s' % keyword
+    outer['To'] = ', '.join(receivers)
+    outer['From'] = sender
+    msg = MIMEText(content, 'plain')
+    msg.preamble = 'From paste %s' % paste
+    msg.add_header('Content-Disposition', 'attachment', filename='content.txt')
+    outer.attach(msg)
+    composed = outer.as_string()
+    s = smtplib.SMTP(smtpserver)
+    s.sendmail(sender,receivers,composed)
+    s.quit()
 
 num_workers = 2
 for i in range(num_workers):
