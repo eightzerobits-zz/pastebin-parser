@@ -50,9 +50,9 @@ from email import encoders
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-sender = 'pastebin-parser@example.net'
-receivers = ['you@example.net']
-smtpserver = '127.0.0.1'
+sender = 'pastebin-parser@bryanbrannigan.net'
+receivers = ['bryan.brannigan@gmail.com']
+smtpserver = '10.2.2.1'
 
 pastesseen = set()
 pastes = Queue.Queue()
@@ -63,7 +63,7 @@ searchstrings = searchstringsfile.readlines()
 def downloader():
     while True:
         paste = pastes.get()
-        delay = 1.1 # random.uniform(1, 3)
+        delay = 5.1 # random.uniform(1, 3)
         fn = "pastebins/%s-%s.txt" % (paste, datetime.datetime.today().strftime("%Y-%m-%d"))
         content = urllib2.urlopen("http://pastebin.com/raw.php?i=" + paste).read()
 	if "requesting a little bit too much" in content:
@@ -79,7 +79,6 @@ def downloader():
 	          	f.close()
         	  	sys.stdout.write("Downloaded %s, waiting %f sec\n" % (paste, delay))
 		  	emailalert(content,s.strip(),paste)
-        delay = 1.1 # random.uniform(1, 3)
         time.sleep(delay)
         pastes.task_done()
 
@@ -91,24 +90,23 @@ def scraper():
         for link in soup.findAll('a'):
             href = link.get('href')
             if '/' in href[0] and len(href) == 9:
-	        if href in pastesseen:
+	        if href[1:] in pastesseen:
                     sys.stdout.write("%s already seen\n" % href)
                 else:
                     href = href[1:] # chop off leading /
                     pastes.put(href)
                     pastesseen.add(href)
                     sys.stdout.write("%s queued for download\n" % href)
-        delay = 12 # random.uniform(6,10)
+        delay = 60 # random.uniform(6,10)
         time.sleep(delay)
         scrapecount = 1
 
 def emailalert(content,keyword,paste):
     outer = MIMEMultipart()
-    outer['Subject'] = 'Pastebin Parser Alert %s' % keyword
+    outer['Subject'] = 'Pastebin Parser Alert - Paste: %s - Keyword: %s' % (paste,keyword)
     outer['To'] = ', '.join(receivers)
     outer['From'] = sender
     msg = MIMEText(content, 'plain')
-    msg.preamble = 'From paste %s' % paste
     msg.add_header('Content-Disposition', 'attachment', filename='content.txt')
     outer.attach(msg)
     composed = outer.as_string()
