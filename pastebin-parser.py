@@ -66,19 +66,19 @@ searchstrings = searchstringsfile.readlines()
 def downloader():
     while True:
         paste = pastes.get()
-        delay = 5,1 #random.uniform(1, 3)
+        delay = 5 #random.uniform(1, 3)
         fn = "pastebins/%s-%s.txt" % (paste, datetime.datetime.today().strftime("%Y-%m-%d"))
         try:
 	   content = urllib2.urlopen("http://pastebin.com/raw.php?i=" + paste).read()
 	except HTTPError, e:
-	   log.write("Request failed on %s (%d left)" % (paste, pastes.qsize()))
+	   log.write("Request failed on %s (%d left)\n" % (paste, pastes.qsize()))
 	   pastes.task_done()
 	if "requesting a little bit too much" in content:
-  	   log.write("Throttling... requeuing %s... (%d left)" % (paste, pastes.qsize()))
+  	   log.write("Throttling... requeuing %s... (%d left)\n" % (paste, pastes.qsize()))
 	   pastes.put(paste)
 	   time.sleep(0.1)
 	else:
-	   log.write("Downloaded %s, waiting %f sec\n ... (%d left)" % (paste, delay, pastes.qsize)) 
+	   log.write("Downloaded %s... (%d left)\n" % (paste, pastes.qsize())) 
 	   for s in searchstrings:
 		if s.strip().lower() in content.lower():
 			log.write(s.strip() + " found in %s" % paste) 
@@ -86,7 +86,8 @@ def downloader():
 	          	f.write(content)
 	          	f.close()
 		  	emailalert(content,s.strip(),paste)
-        time.sleep(delay)
+        log.flush()
+	time.sleep(delay)
         pastes.task_done()
 
 def scraper():
@@ -120,7 +121,7 @@ def emailalert(content,keyword,paste):
     s.sendmail(sender,receivers,composed)
     s.quit()
 
-num_workers = 1
+num_workers = 4
 for i in range(num_workers):
     t = threading.Thread(target=downloader)
     t.setDaemon(True)
