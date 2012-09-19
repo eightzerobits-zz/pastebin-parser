@@ -31,7 +31,7 @@
 """
 This code is intended to retrieve a list of pastes from pastebin once per minute.  Each paste is then individual downloaded and searched for strings which are defined in the searchstrings.txt file.  
 
-Dependancies: BeautifulSoup
+Dependancies: BeautifulSoup,pymongo
 
 This code might cause the world to implode.  Run at your own risk.  
 """
@@ -46,10 +46,18 @@ import datetime
 import random
 import os
 import smtplib
+import pymongo
+import datetime
+
 from email import encoders
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from urllib2 import Request, urlopen, URLError, HTTPError
+from pymongo import Connection
+
+connection = Connection()
+db = connection.datastore
+collection = db.pastes
 
 sender = 'pastebin-parser@bryanbrannigan.net'
 receivers = ['bryan.brannigan@gmail.com']
@@ -79,6 +87,9 @@ def downloader():
 	   time.sleep(0.1)
 	else:
 	   log.write("Downloaded %s... (%d left)\n" % (paste, pastes.qsize())) 
+	   pastedb = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": content}
+	   insid = collection.insert(pastedb)
+	   log.write("Recorded Inserted... (%s)\n" % insid) 
 	   for s in searchstrings:
 		if s.strip().lower() in content.lower():
 			log.write(s.strip() + " found in %s" % paste) 
@@ -93,17 +104,21 @@ def downloader():
 def scraper():
     scrapecount = 1
     while scrapecount:
-        html = urllib2.urlopen("http://www.pastebin.com/archives/").read()
-        soup = BeautifulSoup.BeautifulSoup(html)
-        for link in soup.findAll('a'):
-            href = link.get('href')
-            if '/' in href[0] and len(href) == 9:
-	        if href[1:] not in pastesseen:
-                    href = href[1:] # chop off leading /
-                    pastes.put(href)
-                    pastesseen.add(href)
-                    log.write("%s queued for download\n" % href)
-        log.flush() 
+        try:
+	   html = urllib2.urlopen("http://www.pastebin.com/archives/").read()
+           soup = BeautifulSoup.BeautifulSoup(html)
+           for link in soup.findAll('a'):
+              href = link.get('href')
+              if '/' in href[0] and len(href) == 9:
+	          if href[1:] not in pastesseen:
+                      href = href[1:] # chop off leading /
+                      pastes.put(href)
+                      pastesseen.add(href)
+                      log.write("%s queued for download\n" % href)
+        except HTTPError, e:
+	   log.write("Request failed for archive %s" % e)
+	   time.sleep(30)	
+	log.flush() 
 	delay = 60 # random.uniform(6,10)
         time.sleep(delay)
         scrapecount = 1
