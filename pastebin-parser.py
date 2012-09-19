@@ -71,6 +71,16 @@ log = open("log.txt", "wt")
 searchstringsfile = open("searchstrings.txt")
 searchstrings = searchstringsfile.readlines()
 
+def safe_unicode(obj, *args):
+    """ return the unicode representation of obj """
+    try:
+        return unicode(obj, *args)
+    except UnicodeDecodeError:
+        # obj is byte string
+        ascii_text = str(obj).encode('string_escape')
+        return unicode(ascii_text)
+
+
 def downloader():
     while True:
         paste = pastes.get()
@@ -87,7 +97,7 @@ def downloader():
 	   time.sleep(0.1)
 	else:
 	   log.write("Downloaded %s... (%d left)\n" % (paste, pastes.qsize())) 
-	   pastedb = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": content}
+	   pastedb = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": safe_unicode(content)}
 	   insid = collection.insert(pastedb)
 	   log.write("Recorded Inserted... (%s)\n" % insid) 
 	   for s in searchstrings:
