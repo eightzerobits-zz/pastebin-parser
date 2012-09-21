@@ -36,18 +36,8 @@ Dependancies: BeautifulSoup,pymongo
 This code might cause the world to implode.  Run at your own risk.  
 """
 
-import BeautifulSoup
-import urllib2
-import time
-import Queue
-import threading
-import sys
-import datetime
-import random
-import os
-import smtplib
-import pymongo
-import datetime
+import sys, os, time, datetime, random, smtplib
+import BeautifulSoup, threading, Queue, pymongo
 
 from email import encoders
 from email.mime.multipart import MIMEMultipart
@@ -71,6 +61,25 @@ log = open("log.txt", "wt")
 searchstringsfile = open("searchstrings.txt")
 searchstrings = searchstringsfile.readlines()
 
+def get_url_content(url):
+
+    req_headers = {
+        'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:14.0) Gecko/20100101 Firefox/14.0.1',
+        'Referer': 'http://pastebin.com'
+    }
+
+    try:
+        content = urlopen(url).read()
+    except HTTPError, e:
+        log.write("Bombed out on %s... Letting it go...\n" % url)
+        return 0
+    except URLError, e:
+        log.write("Bombed out on %s... Letting it go...\n" % url)
+        return 0
+
+    return content
+
+
 def safe_unicode(obj, *args):
     """ return the unicode representation of obj """
     try:
@@ -86,11 +95,13 @@ def downloader():
         paste = pastes.get()
         delay = 5 #random.uniform(1, 3)
         fn = "pastebins/%s-%s.txt" % (paste, datetime.datetime.today().strftime("%Y-%m-%d"))
-        try:
-	   content = urllib2.urlopen("http://pastebin.com/raw.php?i=" + paste).read()
-	except HTTPError, e:
-	   log.write("Request failed on %s (%d left)\n" % (paste, pastes.qsize()))
-	   pastes.task_done()
+
+        content = get_url_content("http://pastebin.com/raw.php?i=" + paste)
+
+        if not (content):
+            pastes.task_done()
+            continue
+
 	if "requesting a little bit too much" in content:
   	   log.write("Throttling... requeuing %s... (%d left)\n" % (paste, pastes.qsize()))
 	   pastes.put(paste)
@@ -112,26 +123,28 @@ def downloader():
         pastes.task_done()
 
 def scraper():
-    scrapecount = 1
-    while scrapecount:
-        try:
-	   html = urllib2.urlopen("http://www.pastebin.com/archives/").read()
-           soup = BeautifulSoup.BeautifulSoup(html)
-           for link in soup.findAll('a'):
-              href = link.get('href')
-              if '/' in href[0] and len(href) == 9:
-	          if href[1:] not in pastesseen:
-                      href = href[1:] # chop off leading /
-                      pastes.put(href)
-                      pastesseen.add(href)
-                      log.write("%s queued for download\n" % href)
-        except HTTPError, e:
-	   log.write("Request failed for archive %s" % e)
-	   time.sleep(30)	
+    while True:
+
+        content = get_url_content("http://www.pastebin.com/archives/")
+
+        if not (content):
+            delay = random.uniform(6,10)
+            time.sleep(delay)
+            continue
+
+        soup = BeautifulSoup.BeautifulSoup(content)
+        for link in soup.findAll('a'):
+           href = link.get('href')
+           if '/' in href[0] and len(href) == 9:
+              if href[1:] not in pastesseen:
+                  href = href[1:] # chop off leading /
+                  pastes.put(href)
+                  pastesseen.add(href)
+                  log.write("%s queued for download\n" % href)
+
 	log.flush() 
-	delay = 60 # random.uniform(6,10)
+	delay = 60 
         time.sleep(delay)
-        scrapecount = 1
 
 def emailalert(content,keyword,paste):
     outer = MIMEMultipart()
