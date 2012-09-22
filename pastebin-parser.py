@@ -49,9 +49,9 @@ connection = Connection()
 db = connection.datastore
 collection = db.pastes
 
-sender = 'pastebin-parser@bryanbrannigan.net'
-receivers = ['bryan.brannigan@gmail.com']
-smtpserver = '10.2.2.1'
+sender = 'pastebin-parser@mayhemiclabs.com'
+receivers = ['bbj@innismir.net']
+smtpserver = '173.45.229.151'
 
 pastesseen = set()
 pastes = Queue.Queue()
@@ -71,10 +71,10 @@ def get_url_content(url):
     try:
         content = urlopen(url).read()
     except HTTPError, e:
-        log.write("Bombed out on %s... Letting it go...\n" % url)
+        log.write("Bombed out on %s... HTTP Error (%s)... Letting it go...\n" % (url, e.code))
         return 0
     except URLError, e:
-        log.write("Bombed out on %s... Letting it go...\n" % url)
+        log.write("Bombed out on %s... URL Error (%s)... Letting it go...\n" % (url, e.reason))
         return 0
 
     return content
@@ -110,10 +110,10 @@ def downloader():
 	   log.write("Downloaded %s... (%d left)\n" % (paste, pastes.qsize())) 
 	   pastedb = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": safe_unicode(content)}
 	   insid = collection.insert(pastedb)
-	   log.write("Recorded Inserted... (%s)\n" % insid) 
+	   log.write("%s Inserted... (%s)\n" % (paste, insid)) 
 	   for s in searchstrings:
 		if s.strip().lower() in content.lower():
-			log.write(s.strip() + " found in %s" % paste) 
+			log.write(s.strip() + " found in %s\n" % paste) 
 		  	f = open(fn, "wt")
 	          	f.write(content)
 	          	f.close()
@@ -123,32 +123,42 @@ def downloader():
         pastes.task_done()
 
 def scraper():
+    failures = 0
     while True:
 
         content = get_url_content("http://www.pastebin.com/archives/")
 
         if not (content):
-            delay = random.uniform(6,10)
-            time.sleep(delay)
+            time.sleep(10)
+            failures += 1
+
+            #Three failures in a row? Go into a holding pattern.
+            if failures > 2:
+                time.sleep(300)
+
             continue
+
+        failures = 0
 
         soup = BeautifulSoup.BeautifulSoup(content)
         for link in soup.findAll('a'):
            href = link.get('href')
-           if '/' in href[0] and len(href) == 9:
-              if href[1:] not in pastesseen:
-                  href = href[1:] # chop off leading /
+           if '/' in href[0] and len(href) == 9 and href != "settings" and href != "archvies":
+              href = href[1:] # chop off leading /
+              dupe_check = {"pastesource": "Pastebin", "pasteid": href}
+              if collection.find_one(dupe_check) is None:
                   pastes.put(href)
                   pastesseen.add(href)
                   log.write("%s queued for download\n" % href)
+              else:
+                  log.write("%s is a dupe. Not queued.\n" % href)
 
 	log.flush() 
-	delay = 60 
-        time.sleep(delay)
+        time.sleep(60)
 
 def emailalert(content,keyword,paste):
     outer = MIMEMultipart()
-    outer['Subject'] = 'Pastebin Parser Alert - Paste: %s - Keyword: %s' % (paste,keyword)
+    outer['Subject'] = 'Pastebin Parser Alert - Keyword: %s - Paste: %s' % (paste,keyword)
     outer['To'] = ', '.join(receivers)
     outer['From'] = sender
     msg = MIMEText(content, 'plain')
@@ -159,14 +169,11 @@ def emailalert(content,keyword,paste):
     s.sendmail(sender,receivers,composed)
     s.quit()
 
-num_workers = 4
+num_workers = 3
 for i in range(num_workers):
     t = threading.Thread(target=downloader)
     t.setDaemon(True)
     t.start()
-
-if not os.path.exists("pastebins"):
-    os.mkdir("pastebins") # Thanks, threecheese!
 
 s = threading.Thread(target=scraper)
 s.start()
