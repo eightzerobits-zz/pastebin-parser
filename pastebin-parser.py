@@ -44,14 +44,14 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from urllib2 import Request, urlopen, URLError, HTTPError
 from pymongo import Connection
+from ConfigParser import SafeConfigParser
 
 connection = Connection()
 db = connection.datastore
 collection = db.pastes
 
-sender = 'pastebin-parser@mayhemiclabs.com'
-receivers = ['bbj@innismir.net']
-smtpserver = '173.45.229.151'
+config = SafeConfigParser()
+config.read('config.ini')
 
 pastesseen = set()
 pastes = Queue.Queue()
@@ -79,7 +79,6 @@ def get_url_content(url):
 
     return content
 
-
 def safe_unicode(obj, *args):
     """ return the unicode representation of obj """
     try:
@@ -89,12 +88,9 @@ def safe_unicode(obj, *args):
         ascii_text = str(obj).encode('string_escape')
         return unicode(ascii_text)
 
-
 def downloader():
     while True:
         paste = pastes.get()
-        delay = 5 #random.uniform(1, 3)
-        fn = "pastebins/%s-%s.txt" % (paste, datetime.datetime.today().strftime("%Y-%m-%d"))
 
         content = get_url_content("http://pastebin.com/raw.php?i=" + paste)
 
@@ -111,15 +107,14 @@ def downloader():
 	   pastedb = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": safe_unicode(content)}
 	   insid = collection.insert(pastedb)
 	   log.write("%s Inserted... (%s)\n" % (paste, insid)) 
+
 	   for s in searchstrings:
 		if s.strip().lower() in content.lower():
-			log.write(s.strip() + " found in %s\n" % paste) 
-		  	f = open(fn, "wt")
-	          	f.write(content)
-	          	f.close()
-		  	emailalert(content,s.strip(),paste)
+		    log.write(s.strip() + " found in %s\n" % paste) 
+		    emailalert(content,s.strip(),paste)
+
         log.flush()
-	time.sleep(delay)
+	time.sleep(random.uniform(1, 3))
         pastes.task_done()
 
 def scraper():
@@ -160,16 +155,17 @@ def emailalert(content,keyword,paste):
     outer = MIMEMultipart()
     outer['Subject'] = 'Pastebin Parser Alert - Keyword: %s - Paste: %s' % (paste,keyword)
     outer['To'] = ', '.join(receivers)
-    outer['From'] = sender
+    outer['From'] = config.get('mail', 'sender')
+
     msg = MIMEText(content, 'plain')
     msg.add_header('Content-Disposition', 'attachment', filename='content.txt')
     outer.attach(msg)
     composed = outer.as_string()
-    s = smtplib.SMTP(smtpserver)
-    s.sendmail(sender,receivers,composed)
+    s = smtplib.SMTP(config.get('mail', 'smtpserver'))
+    s.sendmail(config.get('mail', 'sender'),config.get('mail', 'receivers').split(','),composed)
     s.quit()
 
-num_workers = 3
+num_workers = 6
 for i in range(num_workers):
     t = threading.Thread(target=downloader)
     t.setDaemon(True)
