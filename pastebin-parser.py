@@ -53,10 +53,9 @@ collection = db.pastes
 config = SafeConfigParser()
 config.read('config.ini')
 
-pastesseen = set()
 pastes = Queue.Queue()
 
-log = open("log.txt", "wt")
+log = open("log.txt", "a")
 
 searchstringsfile = open("searchstrings.txt")
 searchstrings = searchstringsfile.readlines()
@@ -89,32 +88,33 @@ def safe_unicode(obj, *args):
         return unicode(ascii_text)
 
 def downloader():
-    while True:
+
+    while pastes.qsize() > 0:
         paste = pastes.get()
 
         content = get_url_content("http://pastebin.com/raw.php?i=" + paste)
 
         if not (content):
+            #pastes.put(paste)
             pastes.task_done()
-            continue
 
-	if "requesting a little bit too much" in content:
-  	   log.write("Throttling... requeuing %s... (%d left)\n" % (paste, pastes.qsize()))
-	   pastes.put(paste)
-	   time.sleep(0.1)
-	else:
-	   log.write("Downloaded %s... (%d left)\n" % (paste, pastes.qsize())) 
-	   pastedb = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": safe_unicode(content)}
-	   insid = collection.insert(pastedb)
-	   log.write("%s Inserted... (%s)\n" % (paste, insid)) 
+        if "requesting a little bit too much" in content:
+            log.write("Throttling... requeuing %s... (%d left)\n" % (paste, pastes.qsize()))
+            pastes.put(paste)
+	    time.sleep(0.1)
+        else:
+            log.write("Downloaded %s... (%d left)\n" % (paste, pastes.qsize())) 
+            pastedb = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": safe_unicode(content)}
+            insid = collection.insert(pastedb)
+            log.write("%s Inserted... (%s)\n" % (paste, insid)) 
 
-	   for s in searchstrings:
-		if s.strip().lower() in content.lower():
-		    log.write(s.strip() + " found in %s\n" % paste) 
-		    emailalert(content,s.strip(),paste)
+            for s in searchstrings:
+	        if s.strip().lower() in content.lower():
+                    log.write(s.strip() + " found in %s\n" % paste) 
+                    emailalert(content,s.strip(),paste)
 
         log.flush()
-	time.sleep(random.uniform(1, 3))
+        time.sleep(random.uniform(1, 3))
         pastes.task_done()
 
 def scraper():
@@ -143,7 +143,6 @@ def scraper():
               dupe_check = {"pastesource": "Pastebin", "pasteid": href}
               if collection.find_one(dupe_check) is None:
                   pastes.put(href)
-                  pastesseen.add(href)
                   log.write("%s queued for download\n" % href)
               else:
                   log.write("%s is a dupe. Not queued.\n" % href)
@@ -154,7 +153,7 @@ def scraper():
 def emailalert(content,keyword,paste):
     outer = MIMEMultipart()
     outer['Subject'] = 'Pastebin Parser Alert - Keyword: %s - Paste: %s' % (paste,keyword)
-    outer['To'] = ', '.join(receivers)
+    outer['To'] = config.get('mail', 'receivers')
     outer['From'] = config.get('mail', 'sender')
 
     msg = MIMEText(content, 'plain')
@@ -165,12 +164,30 @@ def emailalert(content,keyword,paste):
     s.sendmail(config.get('mail', 'sender'),config.get('mail', 'receivers').split(','),composed)
     s.quit()
 
-num_workers = 6
-for i in range(num_workers):
-    t = threading.Thread(target=downloader)
-    t.setDaemon(True)
-    t.start()
-
 s = threading.Thread(target=scraper)
+s.setDaemon(True)
 s.start()
-s.join()
+
+while True:
+
+    suggested_threads = int(pastes.qsize() / 100)
+    actual_threads = int(config.get('threads', 'min_count'))
+
+    if (suggested_threads > actual_threads):
+         if (actual_threads < int(config.get('threads', 'max_count'))): 
+             actual_threads = suggested_threads
+         else:
+             actual_threads = int(config.get('threads', 'max_count'))
+
+
+    if pastes.qsize() > 0 and (threading.active_count() < (actual_threads + 1)):
+        while (threading.active_count() < (actual_threads + 1)):
+            log.write("Spinning Up Downloader Thread...\n")
+            t = threading.Thread(target=downloader)
+            t.setDaemon(True)
+            t.start()
+
+    log.write("Threads: Min %d - Suggested %d - Max %d - Actual %d\n" % (int(config.get('threads', 'min_count')), suggested_threads, int(config.get('threads', 'max_count')), threading.active_count() - 1))
+    log.flush()
+    time.sleep(5)
+
