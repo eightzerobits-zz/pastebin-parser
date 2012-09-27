@@ -154,7 +154,7 @@ def scraper():
 def emailalert(content,keyword,paste):
     outer = MIMEMultipart()
     outer['Subject'] = 'Pastebin Parser Alert - Keyword: %s - Paste: %s' % (paste,keyword)
-    outer['To'] = ', '.join(receivers)
+    outer['To'] = ', '.join(config.get('mail','receivers'))
     outer['From'] = config.get('mail', 'sender')
 
     msg = MIMEText(content, 'plain')
