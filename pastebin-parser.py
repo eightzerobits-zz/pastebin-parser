@@ -136,9 +136,9 @@ def scraper():
         failures = 0
 
         soup = BeautifulSoup.BeautifulSoup(content)
-        for link in soup.findAll('a'):
+        for link in soup.html.table.findAll('a'):
            href = link.get('href')
-           if '/' in href[0] and len(href) == 9 and href != "settings" and href != "archvies":
+           if '/' in href[0] and len(href) == 9:
               href = href[1:] # chop off leading /
               dupe_check = {"pastesource": "Pastebin", "pasteid": href}
               if collection.find_one(dupe_check) is None:
