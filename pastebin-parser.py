@@ -129,30 +129,39 @@ def scraper():
 
             #Three failures in a row? Go into a holding pattern.
             if failures > 2:
-                time.sleep(300)
+                log.write("3 Failures in a row. Holding Pattern")
+                time.sleep(450)
+                failures = 0
 
             continue
 
         failures = 0
 
+        links = 0
+	inserts = 0 
+	dupes = 0
+
         soup = BeautifulSoup.BeautifulSoup(content)
         for link in soup.html.table.findAll('a'):
            href = link.get('href')
            if '/' in href[0] and len(href) == 9:
+              links += 1
               href = href[1:] # chop off leading /
               dupe_check = {"pastesource": "Pastebin", "pasteid": href}
               if collection.find_one(dupe_check) is None:
                   pastes.put(href)
-                  log.write("%s queued for download\n" % href)
+                  inserts += 1
               else:
-                  log.write("%s is a dupe. Not queued.\n" % href)
+                  dupes += 1
+
+        log.write("%d links found. %d queued, %d duplicates\n" % (links, inserts, dupes))
 
 	log.flush() 
         time.sleep(60)
 
 def emailalert(content,keyword,paste):
     outer = MIMEMultipart()
-    outer['Subject'] = 'Pastebin Parser Alert - Keyword: %s - Paste: %s' % (paste,keyword)
+    outer['Subject'] = 'Pastebin Parser Alert - Keyword: %s - Paste: %s' % (keyword, paste)
     outer['To'] = config.get('mail', 'receivers')
     outer['From'] = config.get('mail', 'sender')
 
@@ -164,9 +173,13 @@ def emailalert(content,keyword,paste):
     s.sendmail(config.get('mail', 'sender'),config.get('mail', 'receivers').split(','),composed)
     s.quit()
 
+log.write("Starting the Scraper\n")
+
 s = threading.Thread(target=scraper)
 s.setDaemon(True)
 s.start()
+
+log.write("Pastebin Parser is GO\n")
 
 while True:
 
@@ -182,12 +195,15 @@ while True:
 
     if pastes.qsize() > 0 and (threading.active_count() < (actual_threads + 1)):
         while (threading.active_count() < (actual_threads + 1)):
-            log.write("Spinning Up Downloader Thread...\n")
+            log.write("Spinning Up Downloader Thread... (%d in the queue)\n" % pastes.qsize())
             t = threading.Thread(target=downloader)
             t.setDaemon(True)
             t.start()
+            if (pastes.qsize() == 0):
+                log.write("The queue is empty. Let us dine with the philosophers\n")
+                break
 
     log.write("Threads: Min %d - Suggested %d - Max %d - Actual %d\n" % (int(config.get('threads', 'min_count')), suggested_threads, int(config.get('threads', 'max_count')), threading.active_count() - 1))
     log.flush()
-    time.sleep(5)
+    time.sleep(10)
 
