@@ -36,7 +36,7 @@ Dependancies: BeautifulSoup,pymongo
 This code might cause the world to implode.  Run at your own risk.  
 """
 
-import sys, os, time, datetime, random, smtplib
+import sys, os, time, datetime, random, smtplib, re
 import BeautifulSoup, threading, Queue, pymongo
 
 from email import encoders
@@ -109,7 +109,8 @@ def downloader():
             log.write("%s Inserted... (%s)\n" % (paste, insid)) 
 
             for s in searchstrings:
-	        if s.strip().lower() in content.lower():
+	         if re.search(s.strip(), content, flags=re.IGNORECASE|re.MULTILINE|re.DOTALL): 
+		 #if s.strip().lower() in content.lower():
                     log.write(s.strip() + " found in %s\n" % paste) 
                     emailalert(content,s.strip(),paste)
 
