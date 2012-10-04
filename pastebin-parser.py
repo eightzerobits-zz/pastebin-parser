@@ -57,8 +57,7 @@ pastes = Queue.Queue()
 
 log = open("log.txt", "a")
 
-searchstringsfile = open("searchstrings.txt")
-searchstrings = searchstringsfile.readlines()
+searchstrings = []
 
 def get_url_content(url):
 
@@ -183,6 +182,8 @@ s.start()
 log.write("Pastebin Parser is GO\n")
 
 while True:
+
+    searchstrings = open("searchstrings.txt").readlines()
 
     suggested_threads = int(pastes.qsize() / 100)
     actual_threads = int(config.get('threads', 'min_count'))
