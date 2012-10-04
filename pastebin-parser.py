@@ -47,8 +47,8 @@ from pymongo import Connection
 from ConfigParser import SafeConfigParser
 
 connection = Connection()
-db = connection.datastore
-collection = db.pastes
+paste_collection = connection.datastore.pastes
+url_collection = connection.datastore.urls
 
 config = SafeConfigParser()
 config.read('config.ini')
@@ -103,9 +103,17 @@ def downloader():
 	    time.sleep(0.1)
         else:
             log.write("Downloaded %s... (%d left)\n" % (paste, pastes.qsize())) 
-            pastedb = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": safe_unicode(content)}
-            insid = collection.insert(pastedb)
+            paste_info = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": safe_unicode(content)}
+            insid = paste_collection.insert(paste_info)
             log.write("%s Inserted... (%s)\n" % (paste, insid)) 
+
+            try:
+                matches = re.findall("(?P<url>https?://[^\s]+)",  content.lower())
+                for match in matches:
+                    url_info = {"pastesource": "Pastebin", "pasteid": paste, "url": safe_unicode(match)}
+                    url_collection.insert(url_info)
+            except:
+                time.sleep(.1)
 
             for s in searchstrings:
 	         if re.search(s.strip(), content, flags=re.IGNORECASE|re.MULTILINE|re.DOTALL): 
@@ -148,7 +156,7 @@ def scraper():
               links += 1
               href = href[1:] # chop off leading /
               dupe_check = {"pastesource": "Pastebin", "pasteid": href}
-              if collection.find_one(dupe_check) is None:
+              if paste_collection.find_one(dupe_check) is None:
                   pastes.put(href)
                   inserts += 1
               else:
