@@ -43,15 +43,19 @@ from email import encoders
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from urllib2 import Request, urlopen, URLError, HTTPError
+from httplib import BadStatusLine
 from pymongo import Connection
 from ConfigParser import SafeConfigParser
 
-connection = Connection()
+config = SafeConfigParser()
+config.read('config.ini')
+
+connection = Connection(config.get('mongodb', 'host'), int(config.get('mongodb', 'port')))
+connection.datastore.authenticate(str(config.get('mongodb', 'user')), str(config.get('mongodb', 'password')))
+
 paste_collection = connection.datastore.pastes
 url_collection = connection.datastore.urls
 
-config = SafeConfigParser()
-config.read('config.ini')
 
 pastes = Queue.Queue()
 
@@ -62,7 +66,7 @@ searchstrings = []
 def get_url_content(url):
 
     req_headers = {
-        'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:14.0) Gecko/20100101 Firefox/14.0.1',
+        'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:15.0) Gecko/20100101 Firefox/15.0.1',
         'Referer': 'http://pastebin.com'
     }
 
@@ -73,6 +77,9 @@ def get_url_content(url):
         return 0
     except URLError, e:
         log.write("Bombed out on %s... URL Error (%s)... Letting it go...\n" % (url, e.reason))
+        return 0
+    except BadStatusLine, e:
+        log.write("Bombed out on %s... Bad Status Line (%s) ... Letting it go...\n" % (url, e.reason))
         return 0
 
     return content
@@ -91,11 +98,17 @@ def downloader():
     while pastes.qsize() > 0:
         paste = pastes.get()
 
+        dupe_check = {"pastesource": "Pastebin", "pasteid": paste}
+        if paste_collection.find_one(dupe_check) is not None:
+            pastes.task_done()
+            continue
+
         content = get_url_content("http://pastebin.com/raw.php?i=" + paste)
 
-        if not (content):
+        if content == 0:
             #pastes.put(paste)
             pastes.task_done()
+            continue
 
         if "requesting a little bit too much" in content:
             log.write("Throttling... requeuing %s... (%d left)\n" % (paste, pastes.qsize()))
@@ -103,9 +116,6 @@ def downloader():
 	    time.sleep(0.1)
         else:
             log.write("Downloaded %s... (%d left)\n" % (paste, pastes.qsize())) 
-            paste_info = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": safe_unicode(content)}
-            insid = paste_collection.insert(paste_info)
-            log.write("%s Inserted... (%s)\n" % (paste, insid)) 
 
             try:
                 matches = re.findall("(?P<url>https?://[^\s]+)",  content.lower())
@@ -115,11 +125,17 @@ def downloader():
             except:
                 time.sleep(.1)
 
+            string_found = 0
             for s in searchstrings:
 	         if re.search(s.strip(), content, flags=re.IGNORECASE|re.MULTILINE|re.DOTALL): 
-		 #if s.strip().lower() in content.lower():
                     log.write(s.strip() + " found in %s\n" % paste) 
                     emailalert(content,s.strip(),paste)
+                    string_found = 1
+
+            paste_info = {"pastesource": "Pastebin", "pasteid": paste, "insertdate": datetime.datetime.utcnow(), "content": safe_unicode(content), "string_found": string_found}
+            insid = paste_collection.insert(paste_info)
+
+            log.write("%s Inserted... (%s)\n" % (paste, insid)) 
 
         log.flush()
         time.sleep(random.uniform(1, 3))
@@ -155,12 +171,8 @@ def scraper():
            if '/' in href[0] and len(href) == 9:
               links += 1
               href = href[1:] # chop off leading /
-              dupe_check = {"pastesource": "Pastebin", "pasteid": href}
-              if paste_collection.find_one(dupe_check) is None:
-                  pastes.put(href)
-                  inserts += 1
-              else:
-                  dupes += 1
+              pastes.put(href)
+              inserts += 1
 
         log.write("%d links found. %d queued, %d duplicates\n" % (links, inserts, dupes))
 
@@ -183,13 +195,16 @@ def emailalert(content,keyword,paste):
 
 log.write("Starting the Scraper\n")
 
-s = threading.Thread(target=scraper)
-s.setDaemon(True)
-s.start()
+scraper_thread = threading.Thread(target=scraper)
+scraper_thread.daemon = True
+scraper_thread.start()
 
 log.write("Pastebin Parser is GO\n")
 
 while True:
+
+    if not scraper_thread.isAlive():
+        scraper_thread.start()
 
     searchstrings = open("searchstrings.txt").readlines()
 
@@ -213,7 +228,7 @@ while True:
                 log.write("The queue is empty. Let us dine with the philosophers\n")
                 break
 
-    log.write("Threads: Min %d - Suggested %d - Max %d - Actual %d\n" % (int(config.get('threads', 'min_count')), suggested_threads, int(config.get('threads', 'max_count')), threading.active_count() - 1))
+    log.write("Threads: Min %d - Suggested %d - Max %d - Actual %d - Scraper Alive: %s\n" % (int(config.get('threads', 'min_count')), suggested_threads, int(config.get('threads', 'max_count')), threading.active_count() - 1, str(scraper_thread.isAlive())))
     log.flush()
     time.sleep(10)
 
