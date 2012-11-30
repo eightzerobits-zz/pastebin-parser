@@ -51,7 +51,7 @@ url_collection = connection.datastore.urls
 config = SafeConfigParser()
 config.read('config.ini')
 
-log = open("log.txt", "a")
+log = open("parser-log.txt", "a")
 
 searchstrings = []
 

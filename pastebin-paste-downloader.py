@@ -40,7 +40,7 @@ import sys, os, time, datetime, random, pika
 
 from urllib2 import Request, urlopen, URLError, HTTPError
 
-log = open("log.txt", "a")
+log = open("downloader-log.txt", "a")
 
 mq = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
 channel = mq.channel()
@@ -72,19 +72,19 @@ def downloader(ch, method, properties, paste):
         if not (content):
 	    ch.basic_ack(delivery_tag = method.delivery_tag)
 
-        if "requesting a little bit too much" in content:
-            log.write("Throttling... requeuing %s... (%d left)\n" % (paste, pastes.qsize()))
-	    ch.basic_publish(exchange='',routing_key='pastes',body=paste, properties=pika.BasicProperties(delivery_mode = 2,))
-            time.sleep(1)
         else:
-            log.write("Downloaded %s...\n" % (paste))
-            ch.basic_publish(exchange='',routing_key='pastes_data',body=content, properties=pika.BasicProperties(delivery_mode = 2,correlation_id=paste)) 
-	    log.write("%s Queued for Parsing...\n" % (paste))
-
+		if content == 'Hey, it seems you are requesting a little bit too much from Pastebin. Please slow down!':
+		    log.write("Throttling... requeuing %s...\n" % (paste))
+		    ch.basic_publish(exchange='',routing_key='pastes',body=paste, properties=pika.BasicProperties(delivery_mode = 2,))
+      		    time.sleep(2)
+        	else:
+            		log.write("Downloaded %s...\n" % (paste))
+            		ch.basic_publish(exchange='',routing_key='pastes_data',body=content, properties=pika.BasicProperties(delivery_mode = 2,correlation_id=paste)) 
+	    		log.write("%s Queued for Parsing...\n" % (paste))
+			ch.basic_ack(delivery_tag = method.delivery_tag)
 
         log.flush()
         time.sleep(random.uniform(3, 5))
-	ch.basic_ack(delivery_tag = method.delivery_tag)
 
 while True:
 
