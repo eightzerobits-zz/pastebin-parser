@@ -54,6 +54,8 @@ config.read('config.ini')
 log = open("parser-log.txt", "a")
 
 searchstrings = []
+searchstringsfile = open("searchstrings.txt")
+searchstrings = searchstringsfile.readlines()
 
 mq = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
 channel = mq.channel()
