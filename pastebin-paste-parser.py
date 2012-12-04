@@ -57,7 +57,8 @@ searchstrings = []
 searchstringsfile = open("searchstrings.txt")
 searchstrings = searchstringsfile.readlines()
 
-mq = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+mq = pika.BlockingConnection(pika.ConnectionParameters(config.get('rabbitmq', 'hostname'), int(config.get('rabbitmq', 'port')), '/', pika.credentials.PlainCredentials(config.get('rabbitmq', 'username'),config.get('rabbitmq', 'password'))))
+
 channel = mq.channel()
 channel.queue_declare(queue='pastes_data', durable=True)
 
