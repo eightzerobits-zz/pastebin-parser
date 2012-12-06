@@ -84,11 +84,18 @@ def parser(ch, method, properties, content):
         except:
                 time.sleep(.1)
 
+	stringsfound = ''
         for s in searchstrings:
                  if re.search(s.strip(), content, flags=re.IGNORECASE|re.MULTILINE|re.DOTALL):
                  #if s.strip().lower() in content.lower():
                     log.write(s.strip() + " found in %s\n" % properties.correlation_id)
-                    emailalert(content,s.strip(),properties.correlation_id)
+                    if(stringsfound):
+			stringsfound += ", " + s.strip()
+		    else: 
+		   	stringsfound += s.strip()
+	if(stringsfound): 
+	    emailalert(content,stringsfound,properties.correlation_id)
+	    stringsfound = ''
 
 	log.flush()
 	ch.basic_ack(delivery_tag = method.delivery_tag)	
