@@ -36,13 +36,13 @@ Dependancies: BeautifulSoup,pika
 This code might cause the world to implode.  Run at your own risk.  
 """
 
-import sys, os, time, datetime, random, pika
+import sys, os, time, datetime, random, pika, logging
 from ConfigParser import SafeConfigParser
 from urllib2 import Request, urlopen, URLError, HTTPError
 config = SafeConfigParser()
 config.read('config.ini')
 
-log = open("downloader-log.txt", "a")
+logging.basicConfig(filename='downloader-log.txt',format='%(asctime)s %(message)s',level=logging.DEBUG)
 
 mq = pika.BlockingConnection(pika.ConnectionParameters(config.get('rabbitmq', 'hostname'), int(config.get('rabbitmq', 'port')), '/', pika.credentials.PlainCredentials(config.get('rabbitmq', 'username'),config.get('rabbitmq', 'password'))))
 
@@ -60,10 +60,10 @@ def get_url_content(url):
     try:
         content = urlopen(url).read()
     except HTTPError, e:
-        log.write("Bombed out on %s... HTTP Error (%s)... Letting it go...\n" % (url, e.code))
+        logging.warn("Bombed out on %s... HTTP Error (%s)... Letting it go..." % (url, e.code))
         return 0
     except URLError, e:
-        log.write("Bombed out on %s... URL Error (%s)... Letting it go...\n" % (url, e.reason))
+        logging.warn("Bombed out on %s... URL Error (%s)... Letting it go..." % (url, e.reason))
         return 0
 
     return content
@@ -77,20 +77,19 @@ def downloader(ch, method, properties, paste):
 
         else:
 		if content == 'Hey, it seems you are requesting a little bit too much from Pastebin. Please slow down!':
-		    log.write("Throttling... requeuing %s...\n" % (paste))
+                    logging.warn("Throttling... requeuing %s..." % (paste))
 		    ch.basic_publish(exchange='',routing_key='pastes',body=paste, properties=pika.BasicProperties(delivery_mode = 2,))
       		    time.sleep(2)
         	else:
-            		log.write("Downloaded %s...\n" % (paste))
+                        logging.debug("Downloaded %s..." % (paste))
             		ch.basic_publish(exchange='',routing_key='pastes_data',body=content, properties=pika.BasicProperties(delivery_mode = 2,correlation_id=paste)) 
-	    		log.write("%s Queued for Parsing...\n" % (paste))
+                        logging.debug("%s Queued for Parsing..." % (paste))
 			ch.basic_ack(delivery_tag = method.delivery_tag)
-
-        log.flush()
-        time.sleep(random.uniform(3, 5))
+        sleepytime = random.uniform(5, 10)
+        logging.debug("I am sleeping %s seconds..." % (str(sleepytime)))
+        time.sleep(sleepytime)
 
 while True:
-
-        log.write("Spinning Up Downloader Thread...\n")
+        logging.info("Spinning Up Downloader...")
 	channel.basic_consume(downloader,queue='pastes',no_ack=False)
 	channel.start_consuming()
