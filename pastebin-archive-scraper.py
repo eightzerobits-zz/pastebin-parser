@@ -36,14 +36,24 @@ Dependancies: BeautifulSoup,pymongo,pika,RabbitMQ
 This code might cause the world to implode.  Run at your own risk.  
 """
 
-import sys, os, time, datetime, BeautifulSoup, threading, pika, sqlite3
+import sys, os, time, datetime, BeautifulSoup, threading, pika, sqlite3, logging, argparse
 
 from urllib2 import Request, urlopen, URLError, HTTPError
 from ConfigParser import SafeConfigParser
 
-log = open("log.txt", "a")
 config = SafeConfigParser()
 config.read('config.ini')
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-v", "--verbose", help="Increase logging verbosity", action="store_true")
+args = parser.parse_args()
+
+if args.verbose:
+    log_level = logging.DEBUG
+else:
+    log_level = logging.INFO
+
+logging.basicConfig(filename='pastebin-scraper.log', format='%(asctime)s %(message)s', level=log_level)
 
 mq = pika.BlockingConnection(pika.ConnectionParameters(config.get('rabbitmq', 'hostname'), int(config.get('rabbitmq', 'port')), '/', pika.credentials.PlainCredentials(config.get('rabbitmq', 'username'),config.get('rabbitmq', 'password'))))
 
@@ -64,7 +74,7 @@ def scraper():
             failures += 1
             #Three failures in a row? Go into a holding pattern.
             if failures > 2:
-                log.write("3 Failures in a row. Holding Pattern")
+                logging.warn("3 Failures in a row. Holding Pattern")
                 time.sleep(450)
                 failures = 0
             continue
@@ -93,8 +103,7 @@ def scraper():
               else:
                   dupes += 1
 
-        log.write("%d links found. %d queued, %d duplicates\n" % (links, inserts, dupes))
-	log.flush()
+        logging.info("%d links found. %d queued, %d duplicates\n" % (links, inserts, dupes))
         time.sleep(60)
 
 def get_url_content(url):
@@ -105,10 +114,10 @@ def get_url_content(url):
     try:
         content = urlopen(url).read()
     except HTTPError, e:
-        log.write("Bombed out on %s... HTTP Error (%s)... Letting it go...\n" % (url, e.code))
+        logging.warn("Bombed out on %s... HTTP Error (%s)... Letting it go...\n" % (url, e.code))
         return 0
     except URLError, e:
-        log.write("Bombed out on %s... URL Error (%s)... Letting it go...\n" % (url, e.reason))
+        logging.warn("Bombed out on %s... URL Error (%s)... Letting it go...\n" % (url, e.reason))
         return 0
     return content
 
@@ -116,7 +125,7 @@ def get_url_content(url):
 #s.setDaemon(True)
 #s.start()
 
-log.write("Pastebin Archive Scraper is Go\n")
+logging.info("Pastebin Archive Scraper is Go\n")
 while True:
 	scraper()
 mq.close()

@@ -36,13 +36,22 @@ Dependancies: BeautifulSoup,pika
 This code might cause the world to implode.  Run at your own risk.  
 """
 
-import sys, os, time, datetime, random, pika, logging
+import sys, os, time, datetime, random, pika, logging, argparse
 from ConfigParser import SafeConfigParser
 from urllib2 import Request, urlopen, URLError, HTTPError
 config = SafeConfigParser()
 config.read('config.ini')
 
-logging.basicConfig(filename='downloader-log.txt',format='%(asctime)s %(message)s',level=logging.DEBUG)
+parser = argparse.ArgumentParser()
+parser.add_argument("-v", "--verbose", help="Increase logging verbosity", action="store_true")
+args = parser.parse_args()
+
+if args.verbose:
+    log_level = logging.DEBUG
+else:
+    log_level = logging.INFO
+
+logging.basicConfig(filename='pastebin-downloader.log',format='%(asctime)s %(message)s',level=log_level)
 
 mq = pika.BlockingConnection(pika.ConnectionParameters(config.get('rabbitmq', 'hostname'), int(config.get('rabbitmq', 'port')), '/', pika.credentials.PlainCredentials(config.get('rabbitmq', 'username'),config.get('rabbitmq', 'password'))))
 
@@ -81,7 +90,7 @@ def downloader(ch, method, properties, paste):
 		    ch.basic_publish(exchange='',routing_key='pastes',body=paste, properties=pika.BasicProperties(delivery_mode = 2,))
       		    time.sleep(2)
         	else:
-                        logging.debug("Downloaded %s..." % (paste))
+                        logging.info("Downloaded %s..." % (paste))
             		ch.basic_publish(exchange='',routing_key='pastes_data',body=content, properties=pika.BasicProperties(delivery_mode = 2,correlation_id=paste)) 
                         logging.debug("%s Queued for Parsing..." % (paste))
 			ch.basic_ack(delivery_tag = method.delivery_tag)
@@ -90,6 +99,15 @@ def downloader(ch, method, properties, paste):
         time.sleep(sleepytime)
 
 while True:
+    try:
         logging.info("Spinning Up Downloader...")
 	channel.basic_consume(downloader,queue='pastes',no_ack=False)
 	channel.start_consuming()
+    except pika.exceptions.ConnectionClosed:
+        logging.warn("Connection unexpectedly closed! Abandon ship!")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        logging.info("Warning! Keyboard Interrupted Detected. Attempting to hard land...")
+        channel.stop_consuming()
+        mq.close()
+        sys.exit(0)

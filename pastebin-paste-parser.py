@@ -36,7 +36,7 @@ Dependancies: pika,pymongo
 This code might cause the world to implode.  Run at your own risk.  
 """
 
-import sys, os, time, datetime, random, smtplib, re, pika, pymongo
+import sys, os, time, datetime, random, smtplib, re, pika, pymongo, logging, argparse
 
 from email import encoders
 from email.mime.multipart import MIMEMultipart
@@ -44,14 +44,23 @@ from email.mime.text import MIMEText
 from pymongo import Connection
 from ConfigParser import SafeConfigParser
 
-connection = Connection()
-paste_collection = connection.datastore.pastes
-url_collection = connection.datastore.urls
-
 config = SafeConfigParser()
 config.read('config.ini')
 
-log = open("parser-log.txt", "a")
+parser = argparse.ArgumentParser()
+parser.add_argument("-v", "--verbose", help="Increase logging verbosity", action="store_true")
+args = parser.parse_args()
+
+if args.verbose:
+    log_level = logging.DEBUG
+else:
+    log_level = logging.INFO
+
+logging.basicConfig(filename='pastebin-parser.log', format='%(asctime)s %(message)s', level=log_level)
+
+connection = Connection()
+paste_collection = connection.datastore.pastes
+url_collection = connection.datastore.urls
 
 searchstrings = []
 searchstringsfile = open("searchstrings.txt")
@@ -72,10 +81,10 @@ def safe_unicode(obj, *args):
         return unicode(ascii_text)
 
 def parser(ch, method, properties, content):
-	log.write("Parsing %s...\n" % (properties.correlation_id))
+	logging.debug("Parsing %s..." % (properties.correlation_id))
         paste_info = {"pastesource": "Pastebin", "pasteid": properties.correlation_id, "insertdate": datetime.datetime.utcnow(), "content": safe_unicode(content)}
         insid = paste_collection.insert(paste_info)
-        log.write("%s Inserted... (%s)\n" % (properties.correlation_id, insid))
+        logging.info("%s Inserted... (%s)" % (properties.correlation_id, insid))
 	try:
                 matches = re.findall("(?P<url>https?://[^\s]+)",  content.lower())
                 for match in matches:
@@ -88,7 +97,7 @@ def parser(ch, method, properties, content):
         for s in searchstrings:
                  if re.search(s.strip(), content, flags=re.IGNORECASE|re.MULTILINE|re.DOTALL):
                  #if s.strip().lower() in content.lower():
-                    log.write(s.strip() + " found in %s\n" % properties.correlation_id)
+                    logging.info(s.strip() + " found in %s" % properties.correlation_id)
                     if(stringsfound):
 			stringsfound += ", " + s.strip()
 		    else: 
@@ -97,7 +106,6 @@ def parser(ch, method, properties, content):
 	    emailalert(content,stringsfound,properties.correlation_id)
 	    stringsfound = ''
 
-	log.flush()
 	ch.basic_ack(delivery_tag = method.delivery_tag)	
 
 def emailalert(content,keyword,paste):
@@ -106,7 +114,7 @@ def emailalert(content,keyword,paste):
     outer['To'] = config.get('mail', 'receivers')
     outer['From'] = config.get('mail', 'sender')
 
-    msg = MIMEText(content, 'plain')
+    msg = MIMEText(safe_unicode(content.encode('utf8')), 'plain')
     msg.add_header('Content-Disposition', 'attachment', filename='content.txt')
     outer.attach(msg)
     composed = outer.as_string()
@@ -115,7 +123,7 @@ def emailalert(content,keyword,paste):
     s.quit()
 
 while True:
-	log.write("Spinning Up Parser Thread...\n")
+	logging.info("Spinning Up Parser...")
 	channel.basic_consume(parser,queue='pastes_data',no_ack=False)
 	channel.start_consuming()
 
