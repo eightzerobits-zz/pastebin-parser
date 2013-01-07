@@ -36,7 +36,7 @@ Dependancies: BeautifulSoup,pika
 This code might cause the world to implode.  Run at your own risk.  
 """
 
-import sys, os, time, datetime, random, pika, logging, argparse
+import sys, os, time, datetime, random, pika, logging, argparse, urllib2, threading
 from ConfigParser import SafeConfigParser
 from urllib2 import Request, urlopen, URLError, HTTPError
 config = SafeConfigParser()
@@ -53,21 +53,17 @@ else:
 
 logging.basicConfig(filename='pastebin-downloader.log',format='%(asctime)s %(message)s',level=log_level)
 
-mq = pika.BlockingConnection(pika.ConnectionParameters(config.get('rabbitmq', 'hostname'), int(config.get('rabbitmq', 'port')), '/', pika.credentials.PlainCredentials(config.get('rabbitmq', 'username'),config.get('rabbitmq', 'password'))))
-
-channel = mq.channel()
-channel.queue_declare(queue='pastes', durable=True)
-channel.queue_declare(queue='pastes_data', durable=True)
-
 def get_url_content(url):
 
     req_headers = {
-        'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:14.0) Gecko/20100101 Firefox/14.0.1',
+        'User-Agent': 'Mozilla/5.0 (compatible;)',
         'Referer': 'http://pastebin.com'
     }
 
     try:
-        content = urlopen(url).read()
+        url_request = urllib2.Request(url, None, req_headers)
+        opener = urllib2.build_opener()
+        content = opener.open(url_request).read()
     except HTTPError, e:
         logging.warn("Bombed out on %s... HTTP Error (%s)... Letting it go..." % (url, e.code))
         return 0
@@ -98,16 +94,31 @@ def downloader(ch, method, properties, paste):
         logging.debug("I am sleeping %s seconds..." % (str(sleepytime)))
         time.sleep(sleepytime)
 
-while True:
+def downloader_thread():
+
+    mq = pika.BlockingConnection(pika.ConnectionParameters(config.get('rabbitmq', 'hostname'), int(config.get('rabbitmq', 'port')), '/', pika.credentials.PlainCredentials(config.get('rabbitmq', 'username'),config.get('rabbitmq', 'password'))))
+
+    channel = mq.channel()
+    channel.queue_declare(queue='pastes', durable=True)
+    channel.queue_declare(queue='pastes_data', durable=True)
+
     try:
         logging.info("Spinning Up Downloader...")
+        channel.basic_qos(prefetch_count=1)
 	channel.basic_consume(downloader,queue='pastes',no_ack=False)
 	channel.start_consuming()
     except pika.exceptions.ConnectionClosed:
         logging.warn("Connection unexpectedly closed! Abandon ship!")
-        sys.exit(1)
+        return
     except KeyboardInterrupt:
         logging.info("Warning! Keyboard Interrupted Detected. Attempting to hard land...")
         channel.stop_consuming()
         mq.close()
-        sys.exit(0)
+        return
+
+while True:
+    thread = threading.Thread(target=downloader_thread)
+    thread.start()
+    thread.join()
+    logging.warn("Uh Oh! Looks like the thread bombed out. Trying to fix...")
+
