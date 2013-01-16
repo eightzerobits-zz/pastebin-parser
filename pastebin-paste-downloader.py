@@ -66,33 +66,34 @@ def get_url_content(url):
         content = opener.open(url_request).read()
     except HTTPError, e:
         logging.warn("Bombed out on %s... HTTP Error (%s)... Letting it go..." % (url, e.code))
-        return 0
+        return e
     except URLError, e:
         logging.warn("Bombed out on %s... URL Error (%s)... Letting it go..." % (url, e.reason))
-        return 0
+        return e
 
     return content
 
 def downloader(ch, method, properties, paste):
 
-        content = get_url_content("http://pastebin.com/raw.php?i=" + paste)
+    content = get_url_content("http://pastebin.com/raw.php?i=" + paste)
 
-        if not (content):
-	    ch.basic_ack(delivery_tag = method.delivery_tag)
-
+    if isinstance(content, EnvironmentError):
+        ch.basic_ack(delivery_tag = method.delivery_tag)
+        logging.warn("Possible Bannination... Sleeping 30 minutes...")
+        time.sleep(1800)
+    else:
+        if content == 'Hey, it seems you are requesting a little bit too much from Pastebin. Please slow down!':
+            logging.warn("Throttling... requeuing %s..." % (paste))
+            ch.basic_publish(exchange='',routing_key='pastes',body=paste, properties=pika.BasicProperties(delivery_mode = 2,))
+            time.sleep(2)
         else:
-		if content == 'Hey, it seems you are requesting a little bit too much from Pastebin. Please slow down!':
-                    logging.warn("Throttling... requeuing %s..." % (paste))
-		    ch.basic_publish(exchange='',routing_key='pastes',body=paste, properties=pika.BasicProperties(delivery_mode = 2,))
-      		    time.sleep(2)
-        	else:
-                        logging.info("Downloaded %s..." % (paste))
-            		ch.basic_publish(exchange='',routing_key='pastes_data',body=content, properties=pika.BasicProperties(delivery_mode = 2,correlation_id=paste)) 
-                        logging.debug("%s Queued for Parsing..." % (paste))
-			ch.basic_ack(delivery_tag = method.delivery_tag)
-        sleepytime = random.uniform(5, 10)
-        logging.debug("I am sleeping %s seconds..." % (str(sleepytime)))
-        time.sleep(sleepytime)
+            logging.info("Downloaded %s..." % (paste))
+            ch.basic_publish(exchange='',routing_key='pastes_data',body=content, properties=pika.BasicProperties(delivery_mode = 2,correlation_id=paste)) 
+            logging.debug("%s Queued for Parsing..." % (paste))
+	    ch.basic_ack(delivery_tag = method.delivery_tag)
+    sleepytime = random.uniform(5, 10)
+    logging.debug("I am sleeping %s seconds..." % (str(sleepytime)))
+    time.sleep(sleepytime)
 
 def downloader_thread():
 
@@ -109,10 +110,10 @@ def downloader_thread():
 	channel.start_consuming()
     except pika.exceptions.ConnectionClosed:
         logging.warn("Connection unexpectedly closed! Abandon ship!")
-        return
     except KeyboardInterrupt:
         logging.info("Warning! Keyboard Interrupted Detected. Attempting to hard land...")
         channel.stop_consuming()
+    finally:
         mq.close()
         return
 
