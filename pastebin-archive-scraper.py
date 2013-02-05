@@ -1,7 +1,8 @@
 #!/usr/bin/python
 
-# This code was derived by code posted by Michiel Overtoom (http://www.michielovertoom.com/python/pastebin-abused/)
-# Copyright (c) 2012, Bryan Brannigan, Ben Jackson
+# This code was derived by code posted by Michiel Overtoom 
+# (http://www.michielovertoom.com/python/pastebin-abused/)
+# Copyright (c) 2012-2013, Bryan Brannigan, Ben Jackson
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -29,23 +30,27 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 """
-This code is intended to retrieve a list of pastes from pastebin once per minute.  Each paste is then queued to be individually downloaded and processed by the paste downloader.  
+This code is intended to retrieve a list of pastes from pastebin once per 
+minute.  Each paste is then queued to be individually downloaded and 
+processed by the paste downloader.
 
 Dependancies: BeautifulSoup,pymongo,pika,RabbitMQ
 
-This code might cause the world to implode.  Run at your own risk.  
+This code might cause the world to implode.  Run at your own risk.
 """
 
 import sys, os, time, datetime, BeautifulSoup, threading, pika, sqlite3, logging, argparse
 
 from urllib2 import Request, urlopen, URLError, HTTPError
 from ConfigParser import SafeConfigParser
+from daemon import runner
 
 config = SafeConfigParser()
 config.read('config.ini')
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-v", "--verbose", help="Increase logging verbosity", action="store_true")
+parser.add_argument('args', nargs=argparse.REMAINDER)
 args = parser.parse_args()
 
 if args.verbose:
@@ -53,58 +58,6 @@ if args.verbose:
 else:
     log_level = logging.INFO
 
-logging.basicConfig(filename='pastebin-scraper.log', format='%(asctime)s %(message)s', level=log_level)
-
-mq = pika.BlockingConnection(pika.ConnectionParameters(config.get('rabbitmq', 'hostname'), int(config.get('rabbitmq', 'port')), '/', pika.credentials.PlainCredentials(config.get('rabbitmq', 'username'),config.get('rabbitmq', 'password'))))
-
-channel = mq.channel()
-channel.queue_declare(queue='pastes', durable=True)
-
-dupesdb = sqlite3.connect('dupes.db')
-cur = dupesdb.cursor()
-cur.execute("DROP TABLE IF EXISTS dupes")
-cur.execute("CREATE TABLE dupes(href TEXT)")
-
-def scraper():
-    failures = 0
-    while True:
-        content = get_url_content("http://www.pastebin.com/archives/")
-        if not (content):
-            time.sleep(10)
-            failures += 1
-            #Three failures in a row? Go into a holding pattern.
-            if failures > 2:
-                logging.warn("3 Failures in a row. Holding Pattern")
-                time.sleep(450)
-                failures = 0
-            continue
-        failures = 0
-        links = 0
-        inserts = 0
-        dupes = 0
-        soup = BeautifulSoup.BeautifulSoup(content)
-        for link in soup.html.table.findAll('a'):
-           href = link.get('href')
-           if '/' in href[0] and len(href) == 9:
-              links += 1
-              href = href[1:] # chop off leading /
-              cur.execute("SELECT href FROM dupes WHERE href = '%s'" % (href)) 
-	      dupe_check = cur.fetchall()
-	      
-	      if not dupe_check:
-                  channel.basic_publish(exchange='',
-					routing_key='pastes',
-					body=href,
-					properties=pika.BasicProperties(
-						delivery_mode = 2,
-					))
-		  cur.execute("INSERT INTO dupes VALUES('%s')" % (href)) 
-		  inserts += 1
-              else:
-                  dupes += 1
-
-        logging.info("%d links found. %d queued, %d duplicates\n" % (links, inserts, dupes))
-        time.sleep(60)
 
 def get_url_content(url):
     req_headers = {
@@ -114,18 +67,76 @@ def get_url_content(url):
     try:
         content = urlopen(url).read()
     except HTTPError, e:
-        logging.warn("Bombed out on %s... HTTP Error (%s)... Letting it go...\n" % (url, e.code))
+        logging.warn("Bombed out on %s... HTTP Error (%s)... Letting it go..." % (url, e.code))
         return 0
     except URLError, e:
-        logging.warn("Bombed out on %s... URL Error (%s)... Letting it go...\n" % (url, e.reason))
+        logging.warn("Bombed out on %s... URL Error (%s)... Letting it go..." % (url, e.reason))
+        return 0
+    except socket.error, e:
+        logging.warn("Bombed out on %s... Socket Error... Letting it go..." % (url))
         return 0
     return content
 
-#s = threading.Thread(target=scraper)
-#s.setDaemon(True)
-#s.start()
 
-logging.info("Pastebin Archive Scraper is Go\n")
-while True:
-	scraper()
-mq.close()
+class Scraper():
+    def __init__(self):
+        self.stdin_path = '/dev/null'
+        self.stdout_path = '/dev/tty'
+        self.stderr_path = '/dev/tty'
+        self.pidfile_path =  '/var/run/pastebin-archive-scraper.pid'
+        self.pidfile_timeout = 5
+
+    def run(self):
+
+        logging.basicConfig(filename=config.get('directories', 'logdir') + '/pastebin-scraper.log', format='%(asctime)s %(message)s', level=log_level)
+
+        self.mq = pika.BlockingConnection(pika.ConnectionParameters(config.get('rabbitmq', 'hostname'), int(config.get('rabbitmq', 'port')), '/', pika.credentials.PlainCredentials(config.get('rabbitmq', 'username'),config.get('rabbitmq', 'password'))))
+
+        self.channel = self.mq.channel()
+        self.channel.queue_declare(queue='pastes', durable=True)
+
+        dupesdb = sqlite3.connect(config.get('directories', 'dupedbdir') + '/dupes.db')
+        cur = dupesdb.cursor()
+        cur.execute("DROP TABLE IF EXISTS dupes")
+        cur.execute("CREATE TABLE dupes(href TEXT)")
+        cur.execute("SELECT href FROM dupes WHERE href = 'foo'")
+
+        failures = 0
+        while True:
+
+            content = get_url_content("http://www.pastebin.com/archives/")
+            if not (content):
+                time.sleep(10)
+                failures += 1
+                if failures > 2:
+                    logging.warn("3 Failures in a row. Holding Pattern")
+                    time.sleep(450)
+                    failures = 0
+                continue
+            failures, links, inserts, dupes = 0, 0, 0, 0
+
+            soup = BeautifulSoup.BeautifulSoup(content)
+            for link in soup.html.table.findAll('a'):
+                href = link.get('href')
+                if '/' in href[0] and len(href) == 9:
+                    links += 1
+                    href = href[1:] # chop off leading /
+                    cur.execute("SELECT href FROM dupes WHERE href = '%s'" % (href))
+
+                    if not cur.fetchall():
+                        self.channel.basic_publish(exchange='',
+                                              routing_key='pastes',
+                                              body=href,
+                                              properties=pika.BasicProperties(delivery_mode = 2,)
+                                              )
+                        cur.execute("INSERT INTO dupes VALUES('%s')" % (href))
+                        inserts += 1
+                    else:
+                        dupes += 1
+
+            logging.info("%d links found. %d queued, %d duplicates" % (links, inserts, dupes))
+            time.sleep(60)
+
+scraper = Scraper()
+daemon_runner = runner.DaemonRunner(scraper)
+daemon_runner.do_action()
