@@ -62,8 +62,15 @@ def get_url_content(url):
 
     try:
         url_request = urllib2.Request(url, None, req_headers)
-        opener = urllib2.build_opener()
+
+        if int(config.get('downloader', 'use_proxy')):
+            proxy = urllib2.ProxyHandler({'http': str(config.get('downloader', 'proxy_address'))})
+            opener = urllib2.build_opener(proxy)
+        else:
+            opener = urllib2.build_opener()
+
         content = opener.open(url_request).read()
+
     except HTTPError, e:
         logging.warn("Bombed out on %s... HTTP Error (%s)... Letting it go..." % (url, e.code))
         return e
@@ -77,21 +84,42 @@ def downloader(ch, method, properties, paste):
 
     content = get_url_content("http://pastebin.com/raw.php?i=" + paste)
 
-    if isinstance(content, EnvironmentError):
+    if isinstance(content, HTTPError):
+        if content.code == 504:
+            logging.warn("Gateway Error... Requeuing %s..." % (paste))
+            ch.basic_nack(delivery_tag = method.delivery_tag, requeue=True)
+            time.sleep(60)
+        elif content.code == 403:
+            logging.warn("HTTP 403 Error... Dropping %s..." % (paste))
+            ch.basic_ack(delivery_tag = method.delivery_tag)
+            time.sleep(180)
+        else:
+            logging.warn("HTTP Error... Dropping %s..." % (paste))
+            ch.basic_ack(delivery_tag = method.delivery_tag)
+
+    elif isinstance(content, URLError):
+        logging.warn("Connection Error... Requeuing %s..." % (paste))
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+        logging.warn("Possible Bannination... Sleeping 3 minutes...")
+        time.sleep(180)
+
+    elif isinstance(content, EnvironmentError):
         ch.basic_ack(delivery_tag = method.delivery_tag)
         logging.warn("Possible Bannination... Sleeping 30 minutes...")
         time.sleep(1800)
+
     else:
         if content == 'Hey, it seems you are requesting a little bit too much from Pastebin. Please slow down!':
             logging.warn("Throttling... requeuing %s..." % (paste))
-            ch.basic_publish(exchange='',routing_key='pastes',body=paste, properties=pika.BasicProperties(delivery_mode = 2,))
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
             time.sleep(2)
         else:
             logging.info("Downloaded %s..." % (paste))
             ch.basic_publish(exchange='',routing_key='pastes_data',body=content, properties=pika.BasicProperties(delivery_mode = 2,correlation_id=paste)) 
             logging.debug("%s Queued for Parsing..." % (paste))
 	    ch.basic_ack(delivery_tag = method.delivery_tag)
-    sleepytime = random.uniform(5, 10)
+
+    sleepytime = random.uniform(int(config.get('downloader', 'min_wait')),int(config.get('downloader', 'max_wait')))    
     logging.debug("I am sleeping %s seconds..." % (str(sleepytime)))
     time.sleep(sleepytime)
 
